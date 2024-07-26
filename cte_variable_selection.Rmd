@@ -1,0 +1,115 @@
+---
+title: "variable_selection"
+output: html_document
+date: "2024-07-21"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Read the dataset
+```{r}
+library(tidyverse)
+
+data <- read_csv("C:/Users/pranj/Documents/BDSI/DMML/data/corrected_tte.csv")
+
+```
+Create dummy variables for group lasso
+```{r}
+
+library(survival)
+library(survminer)
+time <- data$icu_los_day
+status <- data$death_status
+status <- as.factor(status)
+s <- Surv(time, status)
+
+
+cols <- c(1:7, 9:11, 58:61, 66, 140)
+data.subset <- data[, -cols]
+
+#   admission_type - dummy
+data.subset$emergency <- ifelse(data.subset$admission_type == "EMERGENCY", 1, 0)
+data.subset$urgent <- ifelse(data.subset$admission_type == "URGENT", 1, 0)
+data.subset$elective <- ifelse(data.subset$admission_type == "ELECTIVE", 1, 0)
+
+#   admission_location - dummy
+data.subset$clinic_referral <- ifelse(data.subset$admission_location == "CLINIC REFERRAL/PREMATURE", 1, 0)
+data.subset$emergency <- ifelse(data.subset$admission_location == "EMERGENCY ROOM ADMIT", 1, 0)
+data.subset$transfer_hosp <- ifelse(data.subset$admission_location == "TRANSFER FROM HOSP/EXTRAM", 1, 0)
+data.subset$phys_referral <- ifelse(data.subset$admission_location == "PHYS REFERRAL/NORMAL DELI", 1, 0)
+data.subset$transfer_skilled <- ifelse(data.subset$admission_location == "TRANSFER FROM SKILLED NUR", 1, 0)
+data.subset$transfer_other <- ifelse(data.subset$admission_location == "TRANSFER FROM OTHER HEALT", 1, 0)
+
+#   insurance - dummy
+data.subset$medicare <- ifelse(data.subset$insurance == "Medicare", 1, 0)
+data.subset$private <- ifelse(data.subset$insurance == "Private", 1, 0)
+data.subset$govt <- ifelse(data.subset$insurance == "Government", 1, 0)
+data.subset$medicaid <- ifelse(data.subset$insurance == "Medicaid", 1, 0)
+data.subset$self <- ifelse(data.subset$insurance == "Self Pay", 1, 0)
+
+# gender - dummy (1 is female)
+data.subset$gender_status <- ifelse(data.subset$insurance == "F", 1, 0)
+
+cols <- c(3, 40:43, 49)
+data.subset <- data.subset[, -cols]
+
+cols <- c(38, 39, 40, 47, 49)
+data.subset <- data.subset[, -cols]
+cols <- c(10)
+data.subset <- data.subset[, -cols]
+cols <- c(43)
+data.subset <- data.subset[, -cols]
+cols <- c(10, 37, 43)
+data.subset <- data.subset[, -cols]
+colnames(data.subset)
+
+non_numeric_cols <- sapply(data.subset, function(col) !is.numeric(col))
+# Print non-numeric columns
+if (any(non_numeric_cols)) {
+  cat("Non-numeric columns found:\n")
+  print(names(data.subset)[non_numeric_cols])
+} else {
+  cat("All columns are numeric.\n")
+}
+group <- 1:108
+group <- c(group, 119, 119, 119, 120, 120, 120, 120, 120, 121, 121, 121, 121, 121, 122)
+data_mat <- as.matrix(data.subset[])
+```
+
+Variable selection
+```{r}
+library(grpreg)
+
+set.seed(1287)
+
+train_indices <- sample(1:nrow(data_mat), size = 0.7 * nrow(data_mat))
+
+data_train <- data_mat[train_indices, ]
+s_train <- s[train_indices]
+data_valid <- data_mat[-train_indices, ]
+s_valid <- s[-train_indices]
+
+fit <- grpsurv(data_train, s_train, group)
+cv_fit <- cv.grpsurv(data_train, s_train, group)
+final_fit <- grpsurv(data_train, s_train, group, lambda = mean(cv_fit$lambda))
+print(coef(final_fit))
+
+
+library(randomForest)
+prop_rf <- randomForest(echo.x ~ age + weight + saps + sofa.x + elix_score + vent + vaso + 
+    icu_adm_weekday + icu_adm_hour + icd_chf + icd_afib + icd_copd + 
+    icd_cad + icd_stroke + icd_malignancy, data = data_train, ntree = 2000, maxnodes = 7, importance = TRUE)
+propensity_scores <- prop_rf$predicted
+
+
+library(survival)
+df_valid$id <- 1:nrow(df_valid)
+weights <- ifelse(df_valid$echo.x == 1, 1 / propensity_scores, 1 / (1 - propensity_scores))
+df_valid <- data.frame(data_valid)
+fit_test <- coxph(s_valid ~ age + echo.x + saps + sofa.x + elix_score + vent + icd_chf + icd_afib + icd_copd + icd_stroke + icd_malignancy + vasofreeday28 + ventfreeday28 + sofa_drop_2 + weight_max + day3 + emergency + urgent + elective + clinic_referral + transfer_hosp + phys_referral + transfer_skilled + transfer_other, data = df_valid, weights = weights)
+summary(fit_test)
+```
+
+

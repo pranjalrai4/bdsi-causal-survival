@@ -1,0 +1,242 @@
+---
+title: "re-impute and clean"
+output: html_document
+date: "2024-07-20"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Read the datasets
+```{r}
+library(tidyverse)
+set.seed(123)
+data_imputed <- read_csv("C:/Users/pranj/Documents/BDSI/DMML/data/imputed_sepsis.csv")
+data_tte <- read_csv("C:/Users/pranj/Documents/BDSI/DMML/data/data_time_to_tte.csv")
+```
+
+Merge the datasets and filter out the echocardiograms done before admission into the ICU
+```{r}
+
+
+data_imputed %>% 
+  inner_join(data_tte) %>% 
+  filter(time_to_echo >= 0 | is.na(time_to_echo)) -> all_sepsis
+nrow(all_sepsis)
+
+write.csv(all_sepsis, file = "corrected_tte.csv", row.names = FALSE)
+
+```
+
+Stratification
+```{r}
+library(randomForest)
+library(MatchIt)
+library(broom)
+
+# propensity weighting
+prop_rf <- randomForest(echo.x ~ age + weight + saps + sofa.x + elix_score + vent + vaso + 
+    icu_adm_weekday + icu_adm_hour + icd_chf + icd_afib + icd_copd + 
+    icd_cad + icd_stroke + icd_malignancy, data = all_sepsis, ntree = 2000, maxnodes = 7, importance = TRUE)
+all_sepsis$propensity_score <- predict(prop_rf)
+
+all_sepsis %>% 
+  mutate(quintile = ntile(propensity_score, 5)) -> all_sepsis
+
+all_sepsis %>% 
+  filter(quintile == 1) -> q1
+nrow(q1)
+
+all_sepsis %>% 
+  filter(quintile == 2) -> q2
+nrow(q2)
+
+all_sepsis %>% 
+  filter(quintile == 3) -> q3
+nrow(q3)
+
+all_sepsis %>% 
+  filter(quintile == 4) -> q4
+nrow(q4)
+
+all_sepsis %>% 
+  filter(quintile == 5) -> q5
+nrow(q5)
+
+library(survival)
+library(survminer)
+
+# quintile 1
+time1 <- q1$icu_los_day
+status1 <- q1$death_status
+s1 <- Surv(time1, status1)
+sfit1 <- survfit(s1 ~ q1$echo.x)
+q1result <- coxph(s1 ~ q1$echo.x, data = q1)
+summary(q1result)
+
+# quintile 2
+time2 <- q2$icu_los_day
+status2 <- q2$death_status
+s2 <- Surv(time2, status2)
+sfit2 <- survfit(s2 ~ q2$echo.x)
+q2result <- coxph(s2 ~ q2$echo.x, data = q2)
+summary(q2result)
+
+
+# quintile 3
+time3 <- q3$icu_los_day
+status3 <- q3$death_status
+s3 <- Surv(time3, status3)
+sfit3 <- survfit(s3 ~ q3$echo.x)
+q3result <- coxph(s3 ~ q3$echo.x, data = q3)
+summary(q3result)
+
+
+# quintile 4
+time4 <- q4$icu_los_day
+status4 <- q4$death_status
+s4 <- Surv(time4, status4)
+sfit4 <- survfit(s4 ~ q4$echo.x)
+q4result <- coxph(s4 ~ q4$echo.x, data = q4)
+summary(q4result)
+
+
+# quintile 5
+time5 <- q5$icu_los_day
+status5 <- q5$death_status
+s5 <- Surv(time5, status5)
+sfit5 <- survfit(s5 ~ q5$echo.x)
+q5result <- coxph(s5 ~ q5$echo.x, data = q5)
+summary(q5result)
+
+```
+
+28-days calculation
+```{r}
+# non-weighted cox plot
+library(survival)
+library(survminer)
+time1 <- q1$icu_los_day
+status1 <- q1$death_status
+
+
+nw <- coxph(Surv(time1, status1) ~ echo.x, data=q1, robust = TRUE)
+echo_df <- with(q1, data.frame(echo.x = c(0, 1)))
+fit <- survfit(nw, newdata = echo_df, se.fit = TRUE)
+s <- summary(fit, times = 28)
+
+#difference in event probabilities at 28 days between echo=1 and edemo=0 
+est <- s$surv[2] - s$surv[1]
+#the standard error of this is
+diffSE <- sqrt(s$std.err[2]^2 + s$std.err[1]^2)
+print(diffSE)
+#a 95% CI for the diff is
+ci <- s$surv[2] - s$surv[1] + c(-1, 1) * 1.96 *diffSE
+#print confidence interval
+paste0(round(est, 2), " (", round(ci[1], 2), ", ", round(ci[2], 2), ")")
+
+
+# #a z-test test statistic is
+# zStat <- (s$surv[1] - s$surv[3])/diffSE
+# #and a two-sided p-value testing that the diff. is 0 is
+# 2*pnorm(abs(zStat), lower.tail=FALSE)
+
+
+time2 <- q2$icu_los_day
+status2 <- q2$death_status
+
+
+nw <- coxph(Surv(time2, status2) ~ echo.x, data=q2, robust = TRUE)
+echo_df <- with(q2, data.frame(echo.x = c(0, 1)))
+fit <- survfit(nw, newdata = echo_df, se.fit = TRUE)
+s <- summary(fit, times = 28)
+
+#difference in event probabilities at 28 days between echo=1 and edemo=0 
+est <- s$surv[2] - s$surv[1]
+#the standard error of this is
+diffSE <- sqrt(s$std.err[2]^2 + s$std.err[1]^2)
+print(diffSE)
+#a 95% CI for the diff is
+ci <- s$surv[2] - s$surv[1] + c(-1, 1) * 1.96 *diffSE
+#print confidence interval
+paste0(round(est, 2), " (", round(ci[1], 2), ", ", round(ci[2], 2), ")")
+
+
+# #a z-test test statistic is
+# zStat <- (s$surv[1] - s$surv[3])/diffSE
+# #and a two-sided p-value testing that the diff. is 0 is
+# 2*pnorm(abs(zStat), lower.tail=FALSE)
+
+time3 <- q3$icu_los_day
+status3 <- q3$death_status
+
+
+nw <- coxph(Surv(time3, status3) ~ echo.x, data=q3, robust = TRUE)
+echo_df <- with(q3, data.frame(echo.x = c(0, 1)))
+fit <- survfit(nw, newdata = echo_df, se.fit = TRUE)
+s <- summary(fit, times = 28)
+
+#difference in event probabilities at 28 days between echo=1 and edemo=0 
+est <- s$surv[2] - s$surv[1]
+#the standard error of this is
+diffSE <- sqrt(s$std.err[2]^2 + s$std.err[1]^2)
+print(diffSE)
+#a 95% CI for the diff is
+ci <- s$surv[2] - s$surv[1] + c(-1, 1) * 1.96 *diffSE
+#print confidence interval
+paste0(round(est, 2), " (", round(ci[1], 2), ", ", round(ci[2], 2), ")")
+
+
+# #a z-test test statistic is
+# zStat <- (s$surv[1] - s$surv[3])/diffSE
+# #and a two-sided p-value testing that the diff. is 0 is
+# 2*pnorm(abs(zStat), lower.tail=FALSE)
+
+time4 <- q4$icu_los_day
+status4 <- q4$death_status
+
+
+nw <- coxph(Surv(time4, status4) ~ echo.x, data=q4, robust = TRUE)
+echo_df <- with(q4, data.frame(echo.x = c(0, 1)))
+fit <- survfit(nw, newdata = echo_df, se.fit = TRUE)
+s <- summary(fit, times = 28)
+
+#difference in event probabilities at 28 days between echo=1 and edemo=0 
+est <- s$surv[2] - s$surv[1]
+#the standard error of this is
+diffSE <- sqrt(s$std.err[2]^2 + s$std.err[1]^2)
+print(diffSE)
+#a 95% CI for the diff is
+ci <- s$surv[2] - s$surv[1] + c(-1, 1) * 1.96 *diffSE
+#print confidence interval
+paste0(round(est, 2), " (", round(ci[1], 2), ", ", round(ci[2], 2), ")")
+
+
+# #a z-test test statistic is
+# zStat <- (s$surv[1] - s$surv[3])/diffSE
+# #and a two-sided p-value testing that the diff. is 0 is
+# 2*pnorm(abs(zStat), lower.tail=FALSE)
+
+time5 <- q5$icu_los_day
+status5 <- q5$death_status
+
+
+nw <- coxph(Surv(time5, status5) ~ echo.x, data=q5, robust = TRUE)
+echo_df <- with(q5, data.frame(echo.x = c(0, 1)))
+fit <- survfit(nw, newdata = echo_df, se.fit = TRUE)
+s <- summary(fit, times = 28)
+
+#difference in event probabilities at 28 days between echo=1 and edemo=0 
+est <- s$surv[2] - s$surv[1]
+#the standard error of this is
+diffSE <- sqrt(s$std.err[2]^2 + s$std.err[1]^2)
+print(diffSE)
+#a 95% CI for the diff is
+ci <- s$surv[2] - s$surv[1] + c(-1, 1) * 1.96 *diffSE
+#print confidence interval
+paste0(round(est, 2), " (", round(ci[1], 2), ", ", round(ci[2], 2), ")")
+
+```
+
+
